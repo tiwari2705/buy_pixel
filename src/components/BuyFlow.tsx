@@ -101,6 +101,17 @@ export function BuyFlow() {
 	const [razorpayReady, setRazorpayReady] = useState(false)
 
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const stepsRef = useRef<HTMLOListElement | null>(null)
+
+	// Smooth scroll to top of form/step header whenever step changes
+	useEffect(() => {
+		if (step > 1 && stepsRef.current) {
+			const yOffset = -80 // Offset for sticky header
+			const element = stepsRef.current
+			const y = element.getBoundingClientRect().top + window.pageYOffset + yOffset
+			window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' })
+		}
+	}, [step])
 
 	/* ----------------------------------------------------------- load data */
 	const loadAvailability = useCallback(async () => {
@@ -428,7 +439,7 @@ export function BuyFlow() {
 				onLoad={() => setRazorpayReady(true)}
 			/>
 
-			<ol className="steps">
+			<ol className="steps" ref={stepsRef}>
 				<li data-active={step === 1 ? 'true' : undefined}>1. Select Area</li>
 				<li data-active={step === 2 ? 'true' : undefined}>2. Details &amp; Image</li>
 				<li data-active={step === 3 ? 'true' : undefined}>3. Checkout</li>
