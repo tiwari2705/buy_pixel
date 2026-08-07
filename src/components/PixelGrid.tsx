@@ -190,7 +190,7 @@ export function PixelGrid({
 		}
 
 		ctx.restore()
-	}, [blocks, focusCell, mode, occupied, ready, selection, view])
+	}, [blocks, focusCell, mode, occupied, selection, view])
 
 	useEffect(() => {
 		draw()

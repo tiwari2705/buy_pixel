@@ -15,7 +15,7 @@ export default function ContactPage() {
 					Contact <span className="hero-gradient">Us</span>
 				</h1>
 				<p className="lede" style={{ margin: 0 }}>
-					Questions about buying a block, payments, refunds, or takedowns? Reach out below and we'll reply within one business day.
+					Questions about buying a block, payments, refunds, or takedowns? Reach out below and we&apos;ll reply within one business day.
 				</p>
 			</div>
 

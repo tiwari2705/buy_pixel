@@ -29,7 +29,7 @@ export default function AboutPage() {
 					In 2005, a student named Alex Tew created the Million Dollar Homepage to pay for university. The page became legendary because it was a permanent, vibrant snapshot of the internet at that time.
 				</p>
 				<p>
-					We wanted to bring that exact experience to our campus. Students run photography pages, clubs, resale groups, tech startups, music channels, and creative side hustles. A pixel block on this wall doesn't scroll away in a chat group—it stays right in place permanently.
+					We wanted to bring that exact experience to our campus. Students run photography pages, clubs, resale groups, tech startups, music channels, and creative side hustles. A pixel block on this wall doesn&apos;t scroll away in a chat group—it stays right in place permanently.
 				</p>
 
 				<h2>Specifications &amp; Numbers</h2>
