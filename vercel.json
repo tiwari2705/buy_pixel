@@ -3,7 +3,7 @@
 	"crons": [
 		{
 			"path": "/api/admin/reservations/release",
-			"schedule": "*/10 * * * *"
+			"schedule": "0 0 * * *"
 		}
 	]
 }
