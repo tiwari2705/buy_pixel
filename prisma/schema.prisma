@@ -1,0 +1,152 @@
+// sayitlpu.online - Prisma schema (PostgreSQL)
+// The UNIQUE (x, y) constraint on block_cells is the database-level guarantee
+// that the same 10x10 block can never be sold twice.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum BlockStatus {
+  reserved
+  pending_review
+  live
+  rejected
+}
+
+enum PaymentStatus {
+  created
+  captured
+  failed
+  refunded
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model Block {
+  id          String  @id @default(cuid())
+  orderId     String? @unique @map("order_id")
+  x           Int
+  y           Int
+  width       Int
+  height      Int
+  // Buyer details are NULL during reservation and populated only after
+  // a successful Razorpay payment (webhook `payment.captured`).
+  buyerName   String?  @map("buyer_name")
+  buyerEmail  String?  @map("buyer_email")
+  linkUrl     String?  @map("link_url")
+  description String?
+  imageUrl    String?  @map("image_url")
+  imageWidth  Int?     @map("image_width")
+  imageHeight Int?     @map("image_height")
+
+  status          BlockStatus @default(reserved)
+  reservedUntil   DateTime?   @map("reserved_until")
+  rejectionReason String?     @map("rejection_reason")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  approvedAt      DateTime?   @map("approved_at")
+
+  cells    BlockCell[]
+  payments Payment[]
+  clicks   Click[]
+
+  @@index([status])
+  @@index([reservedUntil])
+  @@map("blocks")
+}
+
+model BlockCell {
+  id      String @id @default(cuid())
+  blockId String @map("block_id")
+  x       Int
+  y       Int
+
+  block Block @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  // MANDATORY: prevents two simultaneous buyers from owning the same block
+  @@unique([x, y], name: "block_cells_x_y_key")
+  @@index([blockId])
+  @@map("block_cells")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  blockId           String        @map("block_id")
+  razorpayOrderId   String        @unique @map("razorpay_order_id")
+  razorpayPaymentId String?       @unique @map("razorpay_payment_id")
+  amount            Int // stored in paise
+  currency          String        @default("INR")
+  status            PaymentStatus @default(created)
+  // Buyer details held here until payment succeeds, then copied to Block
+  buyerData         Json?         @map("buyer_data")
+  rawPayload        Json?         @map("raw_payload")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  block Block @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  @@index([blockId])
+  @@map("payments")
+}
+
+model Click {
+  id        String   @id @default(cuid())
+  blockId   String   @map("block_id")
+  ipHash    String?  @map("ip_hash")
+  referrer  String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  block Block @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  @@index([blockId])
+  @@map("clicks")
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  ipHash    String?  @map("ip_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("contact_messages")
+}
+
+model WebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique @map("event_id")
+  eventType  String   @map("event_type")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("webhook_events")
+}
+
+model Coupon {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  discountType  String    @default("PERCENT") // "PERCENT" | "FIXED"
+  discountValue Float     // e.g. 20 for 20% or 100 for ₹100
+  isUsed        Boolean   @default(false)
+  usedAt        DateTime?
+  usedByEmail   String?   @map("used_by_email")
+  usedByBlockId String?   @map("used_by_block_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("coupons")
+}
+

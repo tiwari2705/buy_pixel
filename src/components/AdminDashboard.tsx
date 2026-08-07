@@ -1,0 +1,555 @@
+'use client'
+
+import { useState } from 'react'
+import { formatInr } from '@/lib/config'
+import type { WallStats } from '@/lib/blocks'
+
+export type LiveBlockData = {
+	id: string
+	x: number
+	y: number
+	width: number
+	height: number
+	blocks: number
+	imageUrl: string
+	linkUrl: string
+	buyerName: string
+	buyerEmail: string
+	description: string
+	amountPaise: number
+	amountLabel: string
+	createdAt: string
+}
+
+export type TopBuyer = {
+	email: string
+	name: string
+	totalAmountPaise: number
+	blocksBought: number
+}
+
+export type CouponData = {
+	id: string
+	code: string
+	discountType: string
+	discountValue: number
+	isUsed: boolean
+	usedAt: string | null
+	usedByEmail: string | null
+	createdAt: string
+}
+
+export type ContactMessageData = {
+	id: string
+	name: string
+	email: string
+	subject: string
+	message: string
+	createdAt: string
+}
+
+type AdminDashboardProps = {
+	blocks: LiveBlockData[]
+	stats: WallStats
+	totalRevenuePaise: number
+	topBuyers: TopBuyer[]
+	initialCoupons?: CouponData[]
+	contactMessages?: ContactMessageData[]
+}
+
+const REJECTION_HINTS = [
+	'Adult or sexual content',
+	'Hate speech or harassment',
+	'Violence or gore',
+	'Illegal goods or services',
+	'Malware, phishing or hidden redirect',
+	'Misleading LPU-official branding',
+	'Copyrighted image the buyer does not own',
+]
+
+export function AdminDashboard({
+	blocks,
+	stats,
+	totalRevenuePaise,
+	topBuyers,
+	initialCoupons = [],
+	contactMessages = [],
+}: AdminDashboardProps) {
+	const [items, setItems] = useState(blocks)
+	const [busyId, setBusyId] = useState<string | null>(null)
+	const [reasons, setReasons] = useState<Record<string, string>>({})
+	const [error, setError] = useState<string | null>(null)
+
+	// Coupon management state
+	const [coupons, setCoupons] = useState<CouponData[]>(initialCoupons)
+	const [newCode, setNewCode] = useState('')
+	const [newDiscountType, setNewDiscountType] = useState<'PERCENT' | 'FIXED'>('PERCENT')
+	const [newDiscountValue, setNewDiscountValue] = useState<string>('')
+	const [couponError, setCouponError] = useState<string | null>(null)
+	const [couponSuccess, setCouponSuccess] = useState<string | null>(null)
+	const [couponBusy, setCouponBusy] = useState(false)
+
+	function removeItem(id: string) {
+		setItems((current) => current.filter((item) => item.id !== id))
+	}
+
+	async function reject(id: string) {
+		const reason = (reasons[id] ?? '').trim()
+		if (reason.length < 5) {
+			setError('Enter a short reason (at least 5 characters) for taking down this block - it is emailed to the buyer.')
+			return
+		}
+		if (!window.confirm('Are you sure you want to delete this block and refund the user?')) return
+		
+		setError(null)
+		setBusyId(id)
+		try {
+			const response = await fetch(`/api/admin/blocks/${id}/reject`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ reason }),
+			})
+			const data = (await response.json().catch(() => ({}))) as { error?: string; warning?: string }
+			if (!response.ok) {
+				setError(data.error ?? 'Could not remove this block.')
+				return
+			}
+			if (data.warning) setError(data.warning)
+			removeItem(id)
+		} catch {
+			setError('Network error. Please try again.')
+		} finally {
+			setBusyId(null)
+		}
+	}
+
+	async function handleCreateCoupon(e: React.FormEvent) {
+		e.preventDefault()
+		setCouponError(null)
+		setCouponSuccess(null)
+
+		const code = newCode.trim().toUpperCase()
+		const val = parseFloat(newDiscountValue)
+
+		if (!code || code.length < 2) {
+			setCouponError('Please enter a valid coupon code (min 2 characters).')
+			return
+		}
+		if (isNaN(val) || val <= 0) {
+			setCouponError('Discount value must be a positive number.')
+			return
+		}
+		if (newDiscountType === 'PERCENT' && val > 100) {
+			setCouponError('Percentage discount cannot exceed 100%.')
+			return
+		}
+
+		setCouponBusy(true)
+		try {
+			const res = await fetch('/api/admin/coupons', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					code,
+					discountType: newDiscountType,
+					discountValue: val,
+				}),
+			})
+			const data = await res.json()
+			if (!res.ok) {
+				setCouponError(data.error ?? 'Failed to create coupon.')
+				return
+			}
+			setCoupons((prev) => [
+				{
+					id: data.coupon.id,
+					code: data.coupon.code,
+					discountType: data.coupon.discountType,
+					discountValue: data.coupon.discountValue,
+					isUsed: data.coupon.isUsed,
+					usedAt: null,
+					usedByEmail: null,
+					createdAt: data.coupon.createdAt ?? new Date().toISOString(),
+				},
+				...prev,
+			])
+			setNewCode('')
+			setNewDiscountValue('')
+			setCouponSuccess(`Coupon '${code}' created successfully!`)
+		} catch {
+			setCouponError('Network error creating coupon.')
+		} finally {
+			setCouponBusy(false)
+		}
+	}
+
+	async function handleDeleteCoupon(id: string, code: string) {
+		if (!window.confirm(`Are you sure you want to delete coupon '${code}'?`)) return
+		try {
+			const res = await fetch(`/api/admin/coupons?id=${id}`, { method: 'DELETE' })
+			if (res.ok) {
+				setCoupons((prev) => prev.filter((c) => c.id !== id))
+			} else {
+				alert('Could not delete coupon.')
+			}
+		} catch {
+			alert('Network error deleting coupon.')
+		}
+	}
+
+	function generateRandomCode() {
+		const rand = Math.random().toString(36).substring(2, 8).toUpperCase()
+		setNewCode(`SAYIT-${rand}`)
+	}
+
+	async function signOut() {
+		await fetch('/api/admin/login', { method: 'DELETE' })
+		window.location.reload()
+	}
+
+	return (
+		<div className="page-shell">
+			<div className="admin-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+				<div>
+					<h1 style={{ margin: '0 0 4px', fontSize: 32, fontWeight: 800 }}>Admin <span className="hero-gradient">Dashboard</span></h1>
+					<p className="meta-note" style={{ margin: 0 }}>Overview of sales, revenue, pixel management &amp; discount coupons.</p>
+				</div>
+				<button className="button button--sm" type="button" onClick={signOut}>
+					Sign Out
+				</button>
+			</div>
+
+			<div className="admin-grid" style={{ marginBottom: 40, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+				<div className="panel" style={{ textAlign: 'center', padding: '32px 20px' }}>
+					<h2 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginTop: 0, fontWeight: 600 }}>Total Sales</h2>
+					<div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.sold} <span style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-muted)' }}>blocks</span></div>
+				</div>
+				<div className="panel" style={{ textAlign: 'center', padding: '32px 20px' }}>
+					<h2 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginTop: 0, fontWeight: 600 }}>Total Revenue</h2>
+					<div style={{ fontSize: '2.5rem', fontWeight: 800, background: 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{formatInr(totalRevenuePaise)}</div>
+				</div>
+				<div className="panel" style={{ textAlign: 'center', padding: '32px 20px' }}>
+					<h2 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginTop: 0, fontWeight: 600 }}>Remaining Capacity</h2>
+					<div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.remaining} <span style={{ fontSize: '1rem', fontWeight: 500, color: 'var(--text-muted)' }}>/ {stats.totalBlocks}</span></div>
+				</div>
+			</div>
+
+			{/* Coupon Management Section */}
+			<h2 style={{ marginBottom: 16, fontSize: 22, fontWeight: 700 }}>Coupon System Management</h2>
+			<div className="panel" style={{ marginBottom: 48, padding: '24px' }}>
+				<form onSubmit={handleCreateCoupon} style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
+					<h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Create New Single-Use Coupon</h3>
+					
+					{couponError && (
+						<div className="alert alert--error" style={{ padding: '8px 12px', fontSize: 14 }}>
+							{couponError}
+						</div>
+					)}
+					{couponSuccess && (
+						<div className="alert alert--info" style={{ padding: '8px 12px', fontSize: 14, borderColor: 'var(--positive)', color: 'var(--positive)' }}>
+							{couponSuccess}
+						</div>
+					)}
+
+					<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, alignItems: 'flex-end' }}>
+						<div className="field" style={{ margin: 0 }}>
+							<label htmlFor="coupon-code" style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: 'block' }}>Coupon Code</label>
+							<div style={{ display: 'flex', gap: 8 }}>
+								<input
+									id="coupon-code"
+									type="text"
+									placeholder="e.g. DISCOUNT20"
+									value={newCode}
+									onChange={(e) => setNewCode(e.target.value.toUpperCase())}
+									style={{ flex: 1, padding: '8px 12px', textTransform: 'uppercase', fontWeight: 700 }}
+								/>
+								<button
+									className="button button--secondary"
+									type="button"
+									onClick={generateRandomCode}
+									style={{ padding: '8px 12px', fontSize: 13 }}
+									title="Generate random code"
+								>
+									Auto
+								</button>
+							</div>
+						</div>
+
+						<div className="field" style={{ margin: 0 }}>
+							<label htmlFor="coupon-type" style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: 'block' }}>Discount Type</label>
+							<select
+								id="coupon-type"
+								value={newDiscountType}
+								onChange={(e) => setNewDiscountType(e.target.value as 'PERCENT' | 'FIXED')}
+								style={{ width: '100%', padding: '9px 12px', background: 'var(--input-bg)', border: '1px solid var(--border-bright)', borderRadius: 6, color: 'var(--input-color)' }}
+							>
+								<option value="PERCENT">Percentage (%)</option>
+								<option value="FIXED">Fixed Amount (₹)</option>
+							</select>
+						</div>
+
+						<div className="field" style={{ margin: 0 }}>
+							<label htmlFor="coupon-value" style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: 'block' }}>
+								Discount Value ({newDiscountType === 'PERCENT' ? '%' : '₹'})
+							</label>
+							<input
+								id="coupon-value"
+								type="number"
+								step="any"
+								min="1"
+								placeholder={newDiscountType === 'PERCENT' ? 'e.g. 20 (for 20%)' : 'e.g. 100 (for ₹100)'}
+								value={newDiscountValue}
+								onChange={(e) => setNewDiscountValue(e.target.value)}
+								style={{ width: '100%', padding: '8px 12px' }}
+							/>
+						</div>
+
+						<button
+							className="button button--primary"
+							type="submit"
+							disabled={couponBusy}
+							style={{ padding: '10px 20px', height: 42 }}
+						>
+							{couponBusy ? 'Creating...' : 'Create Coupon'}
+						</button>
+					</div>
+				</form>
+
+				<h4 style={{ margin: '24px 0 12px', fontSize: 15, fontWeight: 600 }}>Existing Coupons ({coupons.length})</h4>
+				<div style={{ overflowX: 'auto' }}>
+					<table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+						<thead>
+							<tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface-glass)' }}>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)' }}>Code</th>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)' }}>Discount</th>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)' }}>Status</th>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)' }}>Created</th>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)' }}>Redeemed Details</th>
+								<th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-muted)', textAlign: 'right' }}>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{coupons.map((c) => (
+								<tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
+									<td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: 15 }}>
+										{c.code}
+									</td>
+									<td style={{ padding: '12px 16px', color: 'var(--accent)', fontWeight: 600 }}>
+										{c.discountType === 'PERCENT' ? `${c.discountValue}% OFF` : `₹${c.discountValue} OFF`}
+									</td>
+									<td style={{ padding: '12px 16px' }}>
+										{c.isUsed ? (
+											<span style={{
+												display: 'inline-block',
+												padding: '2px 8px',
+												borderRadius: 4,
+												fontSize: 12,
+												fontWeight: 700,
+												background: 'var(--error-soft)',
+												color: 'var(--error)',
+												border: '1px solid var(--error)'
+											}}>
+												USED
+											</span>
+										) : (
+											<span style={{
+												display: 'inline-block',
+												padding: '2px 8px',
+												borderRadius: 4,
+												fontSize: 12,
+												fontWeight: 700,
+												background: 'var(--positive-soft)',
+												color: 'var(--positive)',
+												border: '1px solid var(--positive)'
+											}}>
+												ACTIVE
+											</span>
+										)}
+									</td>
+									<td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>
+										{new Date(c.createdAt).toLocaleDateString()}
+									</td>
+									<td style={{ padding: '12px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>
+										{c.isUsed ? (
+											<div>
+												<div>Used by: <strong>{c.usedByEmail || 'Unknown'}</strong></div>
+												{c.usedAt && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>On: {new Date(c.usedAt).toLocaleString()}</div>}
+											</div>
+										) : (
+											<span style={{ color: 'var(--text-muted)' }}>—</span>
+										)}
+									</td>
+									<td style={{ padding: '12px 16px', textAlign: 'right' }}>
+										{!c.isUsed && (
+											<button
+												className="button button--danger"
+												type="button"
+												style={{ padding: '4px 10px', fontSize: 12 }}
+												onClick={() => handleDeleteCoupon(c.id, c.code)}
+											>
+												Delete
+											</button>
+										)}
+									</td>
+								</tr>
+							))}
+							{coupons.length === 0 && (
+								<tr>
+									<td colSpan={6} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+										No coupons created yet.
+									</td>
+								</tr>
+							)}
+						</tbody>
+					</table>
+				</div>
+			</div>
+
+			<h2 style={{ marginBottom: 16, fontSize: 22, fontWeight: 700 }}>Top Buyers</h2>
+			<div className="panel" style={{ overflowX: 'auto', marginBottom: 48, padding: 0 }}>
+				<table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+					<thead>
+						<tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface-glass)' }}>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Name</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Email</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Blocks Bought</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Total Spent</th>
+						</tr>
+					</thead>
+					<tbody>
+						{topBuyers.map((buyer) => (
+							<tr key={buyer.email} style={{ borderBottom: '1px solid var(--border)' }}>
+								<td style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-primary)' }}>{buyer.name}</td>
+								<td style={{ padding: '16px 20px', color: 'var(--text-secondary)' }}>{buyer.email}</td>
+								<td style={{ padding: '16px 20px', color: 'var(--text-secondary)' }}>{buyer.blocksBought}</td>
+								<td style={{ padding: '16px 20px', fontWeight: 700, color: 'var(--accent)' }}>{formatInr(buyer.totalAmountPaise)}</td>
+							</tr>
+						))}
+						{topBuyers.length === 0 && (
+							<tr>
+								<td colSpan={4} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>No buyers yet.</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+
+			{/* Contact Form Submissions Section */}
+			<h2 style={{ marginBottom: 16, fontSize: 22, fontWeight: 700 }}>Contact Messages Inbox ({contactMessages.length})</h2>
+			<div className="panel" style={{ overflowX: 'auto', marginBottom: 48, padding: 0 }}>
+				<table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+					<thead>
+						<tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface-glass)' }}>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Date</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>From</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Subject</th>
+							<th style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-muted)' }}>Message</th>
+						</tr>
+					</thead>
+					<tbody>
+						{contactMessages.map((msg) => (
+							<tr key={msg.id} style={{ borderBottom: '1px solid var(--border)' }}>
+								<td style={{ padding: '16px 20px', color: 'var(--text-muted)', fontSize: 13, whiteSpace: 'nowrap' }}>
+									{new Date(msg.createdAt).toLocaleString()}
+								</td>
+								<td style={{ padding: '16px 20px', color: 'var(--text-primary)' }}>
+									<div style={{ fontWeight: 700 }}>{msg.name}</div>
+									<a href={`mailto:${msg.email}`} style={{ fontSize: 13, color: 'var(--accent)' }}>{msg.email}</a>
+								</td>
+								<td style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--text-primary)' }}>
+									{msg.subject}
+								</td>
+								<td style={{ padding: '16px 20px', color: 'var(--text-secondary)', maxWidth: 400, overflowWrap: 'anywhere' }}>
+									{msg.message}
+								</td>
+							</tr>
+						))}
+						{contactMessages.length === 0 && (
+							<tr>
+								<td colSpan={4} style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+									No contact messages received yet.
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+
+			<h2 style={{ marginBottom: 16, fontSize: 22, fontWeight: 700 }}>Purchase Records ({items.length})</h2>
+			{error ? (
+				<div className="alert alert--error" role="alert" style={{ marginBottom: 24 }}>
+					{error}
+				</div>
+			) : null}
+
+			{items.length === 0 ? (
+				<div className="alert alert--info">No blocks have been sold yet.</div>
+			) : (
+				<div className="admin-grid">
+					{items.map((item) => (
+						<div className="panel" key={item.id}>
+							<div className="admin-card__image">
+								{/* eslint-disable-next-line @next/next/no-img-element */}
+								<img src={item.imageUrl} alt={`Submission by ${item.buyerName}`} />
+							</div>
+							<dl className="kv">
+								<dt>Name</dt>
+								<dd>{item.buyerName}</dd>
+								<dt>Email</dt>
+								<dd>{item.buyerEmail}</dd>
+								<dt>Link</dt>
+								<dd>
+									<a href={item.linkUrl} target="_blank" rel="noopener noreferrer nofollow" style={{ color: 'var(--accent-cyan)' }}>
+										{item.linkUrl}
+									</a>
+								</dd>
+								<dt>Caption</dt>
+								<dd>{item.description || <span className="meta-note">(none)</span>}</dd>
+								<dt>Area</dt>
+								<dd>
+									{item.width} x {item.height} at ({item.x}, {item.y}) - {item.blocks} blocks
+								</dd>
+								<dt>Paid</dt>
+								<dd style={{ color: 'var(--positive)', fontWeight: 600 }}>{item.amountLabel}</dd>
+								<dt>Date</dt>
+								<dd>{new Date(item.createdAt).toLocaleDateString()}</dd>
+							</dl>
+
+							<div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+								<div className="field">
+									<label htmlFor={`reason-${item.id}`} style={{ fontSize: '13px', fontWeight: 600 }}>Takedown reason (refunds user)</label>
+									<input
+										id={`reason-${item.id}`}
+										type="text"
+										list="rejection-hints"
+										placeholder="e.g. Inappropriate content"
+										value={reasons[item.id] ?? ''}
+										onChange={(event) =>
+											setReasons((current) => ({ ...current, [item.id]: event.target.value }))
+										}
+										style={{ padding: '8px 12px' }}
+									/>
+								</div>
+								<button
+									className="button button--danger"
+									style={{ width: '100%', marginTop: 8 }}
+									type="button"
+									disabled={busyId === item.id}
+									onClick={() => reject(item.id)}
+								>
+									Delete &amp; Refund
+								</button>
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+
+			<datalist id="rejection-hints">
+				{REJECTION_HINTS.map((hint) => (
+					<option key={hint} value={hint} />
+				))}
+			</datalist>
+		</div>
+	)
+}
