@@ -280,16 +280,43 @@ export function PixelGrid({
 		[clampView],
 	)
 
+	useEffect(() => {
+		const canvas = canvasRef.current
+		if (!canvas) return
+
+		const handleTouchMove = (e: TouchEvent) => {
+			if (e.touches.length > 1) {
+				e.preventDefault()
+			}
+		}
+
+		canvas.addEventListener('touchmove', handleTouchMove, { passive: false })
+		return () => {
+			canvas.removeEventListener('touchmove', handleTouchMove)
+		}
+	}, [])
+
 	/* ------------------------------------------------------------- pointers */
 	const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId)
+		} catch {
+			// ignore pointer capture failures on mobile browsers
+		}
 		pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-		event.currentTarget.setPointerCapture(event.pointerId)
 
-		if (pointers.current.size === 2) {
-			const [a, b] = Array.from(pointers.current.values())
-			pinchRef.current = {
-				distance: Math.hypot(a.x - b.x, a.y - b.y),
-				scale: view.scale,
+		if (pointers.current.size >= 2) {
+			const pts = Array.from(pointers.current.values())
+			const a = pts[0]
+			const b = pts[1]
+			if (a && b) {
+				const dist = Math.hypot(a.x - b.x, a.y - b.y)
+				if (dist > 0) {
+					pinchRef.current = {
+						distance: dist,
+						scale: view.scale,
+					}
+				}
 			}
 			dragRef.current = null
 			return
@@ -316,16 +343,23 @@ export function PixelGrid({
 		}
 
 		// pinch zoom
-		if (pointers.current.size === 2 && pinchRef.current) {
-			const [a, b] = Array.from(pointers.current.values())
-			const distance = Math.hypot(a.x - b.x, a.y - b.y)
-			const factor = distance / pinchRef.current.distance
-			setView((current) =>
-				clampView({
-					...current,
-					scale: clamp(pinchRef.current!.scale * factor, MIN_SCALE, MAX_SCALE),
-				}),
-			)
+		if (pointers.current.size >= 2 && pinchRef.current && pinchRef.current.distance > 0) {
+			const pts = Array.from(pointers.current.values())
+			const a = pts[0]
+			const b = pts[1]
+			if (a && b) {
+				const distance = Math.hypot(a.x - b.x, a.y - b.y)
+				if (distance > 0 && pinchRef.current.distance > 0) {
+					const factor = distance / pinchRef.current.distance
+					const baseScale = pinchRef.current.scale
+					setView((current) =>
+						clampView({
+							...current,
+							scale: clamp(baseScale * factor, MIN_SCALE, MAX_SCALE),
+						}),
+					)
+				}
+			}
 			return
 		}
 
@@ -383,6 +417,13 @@ export function PixelGrid({
 	}
 
 	const endPointer = (event: React.PointerEvent<HTMLCanvasElement>) => {
+		try {
+			if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+				event.currentTarget.releasePointerCapture(event.pointerId)
+			}
+		} catch {
+			// ignore pointer release exceptions on mobile browsers
+		}
 		pointers.current.delete(event.pointerId)
 		if (pointers.current.size < 2) pinchRef.current = null
 		dragRef.current = null
