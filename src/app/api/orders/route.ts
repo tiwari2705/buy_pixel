@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { BlocksTakenError, blockCount, isInsideGrid, reserveBlocks, completeFreeOrder } from '@/lib/blocks'
 import {
 	GRID,
@@ -136,6 +137,10 @@ export async function POST(request: Request) {
 				couponCode: appliedCouponCode,
 			})
 
+			// Revalidate homepage to show the new block
+			revalidatePath('/')
+			revalidatePath('/admin')
+
 			return NextResponse.json({
 				isFreeOrder: true,
 				blockId: reservation.blockId,
@@ -193,7 +198,7 @@ export async function POST(request: Request) {
 		return NextResponse.json({
 			blockId: reservation.blockId,
 			razorpayOrderId: razorpayOrder.id,
-			razorpayKeyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? '',
+			razorpayKeyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '',
 			amountPaise: finalAmountPaise,
 			currency: PRICING.currency,
 			blocks,
@@ -203,15 +208,16 @@ export async function POST(request: Request) {
 			siteName: SITE.name,
 			buyer: { name: cleanName, email: cleanEmail },
 		})
-	} catch (error) {
+	} catch (error: any) {
 		// Roll the reservation back so the blocks are not stuck.
-		console.error('[orders] razorpay order failed', error)
+		const reason = error?.message || 'Could not start the payment'
+		console.error('[orders] razorpay order failed:', reason, error)
 		await prisma.$transaction([
 			prisma.blockCell.deleteMany({ where: { blockId: reservation.blockId } }),
 			prisma.block.deleteMany({ where: { id: reservation.blockId } }),
 		])
 		return NextResponse.json(
-			{ error: 'Could not start the payment. Please try again.' },
+			{ error: `Payment creation failed: ${reason}` },
 			{ status: 502 },
 		)
 	}

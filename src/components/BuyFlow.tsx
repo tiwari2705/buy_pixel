@@ -90,7 +90,6 @@ export function BuyFlow() {
 	const [couponError, setCouponError] = useState('')
 	const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null)
 
-	const [localPreview, setLocalPreview] = useState<string | null>(null)
 	const [uploaded, setUploaded] = useState<Uploaded | null>(null)
 	const [uploading, setUploading] = useState(false)
 
@@ -128,12 +127,6 @@ export function BuyFlow() {
 	useEffect(() => {
 		void loadAvailability()
 	}, [loadAvailability])
-
-	useEffect(() => {
-		return () => {
-			if (localPreview) URL.revokeObjectURL(localPreview)
-		}
-	}, [localPreview])
 
 	const occupied = useMemo(
 		() => new Set(availability?.occupied ?? []),
@@ -212,9 +205,6 @@ export function BuyFlow() {
 		setFieldErrors((current) => ({ ...current, image: '' }))
 		setUploaded(null)
 		if (!file) return
-
-		if (localPreview) URL.revokeObjectURL(localPreview)
-		setLocalPreview(URL.createObjectURL(file))
 
 		if (!selection) {
 			setFieldErrors((current) => ({ ...current, image: 'Choose your blocks first.' }))
@@ -574,27 +564,28 @@ export function BuyFlow() {
 								</p>
 								{uploading && <p className="hint">Uploading...</p>}
 								{uploaded && !uploading && (
-									<p className="hint">
-										Uploaded: {uploaded.imageWidth} x {uploaded.imageHeight}px.
-									</p>
+									<div style={{ 
+										display: 'flex', 
+										alignItems: 'center', 
+										gap: '8px', 
+										padding: '8px 12px', 
+										background: '#F9F8F7', 
+										border: '1px solid #E6E5E3', 
+										borderRadius: '4px',
+										marginTop: '8px'
+									}}>
+										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2783DE" strokeWidth="2">
+											<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+											<circle cx="8.5" cy="8.5" r="1.5"/>
+											<polyline points="21 15 16 10 5 21"/>
+										</svg>
+										<span style={{ fontSize: '14px', color: '#2C2C2B' }}>
+											Image uploaded ({uploaded.imageWidth} x {uploaded.imageHeight}px)
+										</span>
+									</div>
 								)}
 								{fieldErrors.image && <p className="field__error">{fieldErrors.image}</p>}
 							</div>
-
-							{localPreview && selection && (
-								<div className="preview-box">
-									<p className="hint">
-										Preview, cropped to your {selection.width} x {selection.height} block area:
-									</p>
-									<div
-										className="preview-frame"
-										style={{ aspectRatio: `${selection.width} / ${selection.height}` }}
-									>
-										{/* eslint-disable-next-line @next/next/no-img-element */}
-										<img src={localPreview} alt="Preview of your uploaded image" />
-									</div>
-								</div>
-							)}
 
 							<div className="field checkbox-field">
 								<input
