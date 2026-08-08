@@ -3,7 +3,8 @@ import { HomeWall } from '@/components/HomeWall'
 import { getLiveBlocks } from '@/lib/blocks'
 import { PRICING, formatInr } from '@/lib/config'
 
-export const revalidate = 60
+// Revalidate every 10 seconds instead of 60 for faster updates
+export const revalidate = 10
 
 export default async function HomePage() {
 	const blocks = await getLiveBlocks()
