@@ -134,8 +134,23 @@ export function PixelGrid({
 			const pw = block.width * BLOCK
 			const ph = block.height * BLOCK
 			if (image && image.complete && image.naturalWidth > 0) {
-				// stretched to cover the whole purchased rectangle, like the original site
-				ctx.drawImage(image, px, py, pw, ph)
+				// Draw image to fill the block completely using cover behavior
+				const imgAspect = image.naturalWidth / image.naturalHeight
+				const blockAspect = pw / ph
+				
+				let sx = 0, sy = 0, sw = image.naturalWidth, sh = image.naturalHeight
+				
+				if (imgAspect > blockAspect) {
+					// Image is wider - crop sides
+					sw = image.naturalHeight * blockAspect
+					sx = (image.naturalWidth - sw) / 2
+				} else {
+					// Image is taller - crop top/bottom
+					sh = image.naturalWidth / blockAspect
+					sy = (image.naturalHeight - sh) / 2
+				}
+				
+				ctx.drawImage(image, sx, sy, sw, sh, px, py, pw, ph)
 			} else {
 				ctx.fillStyle = '#F9F8F7'
 				ctx.fillRect(px, py, pw, ph)
