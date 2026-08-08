@@ -16,13 +16,6 @@ export const prisma =
 
 if (process.env.NODE_ENV !== 'production') {
 	globalForPrisma.prisma = prisma
-	
-	// Clean up connections on hot reload in development
-	if (module.hot) {
-		module.hot.dispose(() => {
-			prisma.$disconnect()
-		})
-	}
 }
 
 /** Postgres unique-constraint violation code surfaced by Prisma. */
