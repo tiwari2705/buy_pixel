@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { Analytics } from '@vercel/analytics/next'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteHeader } from '@/components/SiteHeader'
 import { PRICING, SITE, TOTAL_BLOCKS } from '@/lib/config'
@@ -42,6 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 					</main>
 					<SiteFooter />
 				</div>
+				<Analytics />
 			</body>
 		</html>
 	)

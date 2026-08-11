@@ -9,12 +9,33 @@ function required(name: string): string {
 
 let client: Razorpay | null = null
 
+/**
+ * Reset the Razorpay client instance.
+ * Useful when credentials change during development.
+ */
+export function resetRazorpayClient(): void {
+	client = null
+	console.log('[razorpay] Client reset - will reinitialize on next use')
+}
+
 export function razorpay(): Razorpay {
 	if (!client) {
+		const keyId = (process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '').trim()
+		const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim()
+		
+		// Debug logging
+		console.log('[razorpay] Initializing with Key ID:', keyId ? `${keyId.slice(0, 15)}...` : 'MISSING')
+		console.log('[razorpay] Key Secret present:', keySecret ? 'YES' : 'NO')
+		
+		if (!keyId) throw new Error('Missing required env var RAZORPAY_KEY_ID or NEXT_PUBLIC_RAZORPAY_KEY_ID')
+		if (!keySecret) throw new Error('Missing required env var RAZORPAY_KEY_SECRET')
+
 		client = new Razorpay({
-			key_id: required('RAZORPAY_KEY_ID'),
-			key_secret: required('RAZORPAY_KEY_SECRET'),
+			key_id: keyId,
+			key_secret: keySecret,
 		})
+		
+		console.log('[razorpay] Client initialized successfully')
 	}
 	return client
 }
@@ -32,18 +53,37 @@ export async function createRazorpayOrder(params: {
 	receipt: string
 	notes: Record<string, string>
 }): Promise<RazorpayOrder> {
-	const order = await razorpay().orders.create({
-		amount: params.amountPaise, // always computed server-side
+	console.log('[razorpay] Creating order with params:', {
+		amountPaise: params.amountPaise,
 		currency: params.currency,
 		receipt: params.receipt,
-		payment_capture: true,
-		notes: params.notes,
 	})
-	return {
-		id: order.id as string,
-		amount: Number(order.amount),
-		currency: order.currency as string,
-		status: order.status as string,
+	
+	try {
+		const order = await razorpay().orders.create({
+			amount: params.amountPaise, // always computed server-side
+			currency: params.currency,
+			receipt: params.receipt,
+			notes: params.notes,
+		})
+		
+		console.log('[razorpay] Order created successfully:', order.id)
+		
+		return {
+			id: order.id as string,
+			amount: Number(order.amount),
+			currency: order.currency as string,
+			status: order.status as string,
+		}
+	} catch (error: any) {
+		console.error('[razorpay] orders.create FULL ERROR:', JSON.stringify(error, null, 2))
+		console.error('[razorpay] Error statusCode:', error?.statusCode)
+		console.error('[razorpay] Error code:', error?.error?.code)
+		console.error('[razorpay] Error description:', error?.error?.description)
+		
+		const msg = error?.error?.description || error?.message || String(error)
+		console.error('[razorpay] orders.create failed:', msg, error)
+		throw new Error(msg)
 	}
 }
 
@@ -61,6 +101,45 @@ export function verifyWebhookSignature(rawBody: string, signature: string | null
 	const b = Buffer.from(signature, 'utf8')
 	if (a.length !== b.length) return false
 	return crypto.timingSafeEqual(a, b)
+}
+
+/**
+ * Verifies a Razorpay payment signature from the client-side callback.
+ * Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
+ * 
+ * @param orderId - Razorpay order ID
+ * @param paymentId - Razorpay payment ID
+ * @param signature - Signature received from Razorpay
+ * @returns true if signature is valid, false otherwise
+ */
+export function verifyPaymentSignature(
+	orderId: string,
+	paymentId: string,
+	signature: string,
+): boolean {
+	if (!orderId || !paymentId || !signature) return false
+	
+	try {
+		const keySecret = process.env.RAZORPAY_KEY_SECRET
+		if (!keySecret) {
+			console.error('[razorpay] RAZORPAY_KEY_SECRET is not configured')
+			return false
+		}
+
+		const generatedSignature = crypto
+			.createHmac('sha256', keySecret)
+			.update(`${orderId}|${paymentId}`)
+			.digest('hex')
+
+		const signatureBuffer = Buffer.from(signature, 'utf8')
+		const generatedBuffer = Buffer.from(generatedSignature, 'utf8')
+
+		if (signatureBuffer.length !== generatedBuffer.length) return false
+		return crypto.timingSafeEqual(signatureBuffer, generatedBuffer)
+	} catch (error) {
+		console.error('[razorpay] Payment signature verification failed:', error)
+		return false
+	}
 }
 
 export async function refundPayment(paymentId: string, amountPaise: number, reason: string) {
