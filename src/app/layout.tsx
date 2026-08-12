@@ -4,6 +4,7 @@ import { SiteFooter } from '@/components/SiteFooter'
 import { SiteHeader } from '@/components/SiteHeader'
 import { PRICING, SITE, TOTAL_BLOCKS } from '@/lib/config'
 import './globals.css'
+import Script from "next/script";
 
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE.url),
