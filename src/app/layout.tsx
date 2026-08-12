@@ -4,7 +4,7 @@ import { SiteFooter } from '@/components/SiteFooter'
 import { SiteHeader } from '@/components/SiteHeader'
 import { PRICING, SITE, TOTAL_BLOCKS } from '@/lib/config'
 import './globals.css'
-import Script from "next/script";
+import Script from 'next/script'
 
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE.url),
@@ -38,10 +38,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 					<a className="skip-link" href="#main">
 						Skip to content
 					</a>
+
 					<SiteHeader />
+
 					<main className="app-main" id="main">
 						{children}
 					</main>
+
 					<SiteFooter />
 				</div>
 
