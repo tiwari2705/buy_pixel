@@ -233,17 +233,39 @@ export async function markOrderPaid(params: {
 	]
 
 	if (buyer.couponCode) {
-		txs.push(
-			prisma.coupon.updateMany({
-				where: { code: buyer.couponCode, isUsed: false },
-				data: {
-					isUsed: true,
-					usedAt: new Date(),
-					usedByEmail: buyer.buyerEmail ?? '',
-					usedByBlockId: payment.blockId,
-				},
-			}),
-		)
+		const coupon = await prisma.coupon.findUnique({ where: { code: buyer.couponCode } })
+		if (coupon) {
+			if (coupon.couponType === 'SINGLE_USE') {
+				// Mark single-use coupon as used
+				txs.push(
+					prisma.coupon.updateMany({
+						where: { code: buyer.couponCode, isUsed: false },
+						data: {
+							isUsed: true,
+							usedAt: new Date(),
+							usedByEmail: buyer.buyerEmail ?? '',
+							usedByBlockId: payment.blockId,
+							usageCount: { increment: 1 },
+						},
+					}),
+				)
+			} else {
+				// Unlimited coupon: increment counter + record redemption
+				txs.push(
+					prisma.coupon.update({
+						where: { code: buyer.couponCode },
+						data: { usageCount: { increment: 1 } },
+					}),
+					prisma.couponRedemption.create({
+						data: {
+							couponId: coupon.id,
+							email: buyer.buyerEmail ?? '',
+							blockId: payment.blockId,
+						},
+					}),
+				)
+			}
+		}
 	}
 
 	await prisma.$transaction(txs)
@@ -253,14 +275,16 @@ export async function markOrderPaid(params: {
 
 /**
  * Completes an order when a 100% discount coupon makes the total amount ₹0.
- * Directly assigns the block to the buyer and marks the coupon as used.
+ * Directly assigns the block to the buyer and handles the coupon based on its type.
  */
 export async function completeFreeOrder(params: {
 	blockId: string
 	buyerData: BuyerData
 	couponCode: string
 }): Promise<void> {
-	await prisma.$transaction([
+	const coupon = await prisma.coupon.findUnique({ where: { code: params.couponCode } })
+
+	const txs: Prisma.PrismaPromise<unknown>[] = [
 		prisma.block.update({
 			where: { id: params.blockId },
 			data: {
@@ -287,16 +311,40 @@ export async function completeFreeOrder(params: {
 				buyerData: params.buyerData as unknown as Prisma.InputJsonValue,
 			},
 		}),
-		prisma.coupon.updateMany({
-			where: { code: params.couponCode, isUsed: false },
-			data: {
-				isUsed: true,
-				usedAt: new Date(),
-				usedByEmail: params.buyerData.buyerEmail,
-				usedByBlockId: params.blockId,
-			},
-		}),
-	])
+	]
+
+	if (coupon) {
+		if (coupon.couponType === 'SINGLE_USE') {
+			txs.push(
+				prisma.coupon.updateMany({
+					where: { code: params.couponCode, isUsed: false },
+					data: {
+						isUsed: true,
+						usedAt: new Date(),
+						usedByEmail: params.buyerData.buyerEmail,
+						usedByBlockId: params.blockId,
+						usageCount: { increment: 1 },
+					},
+				}),
+			)
+		} else {
+			txs.push(
+				prisma.coupon.update({
+					where: { code: params.couponCode },
+					data: { usageCount: { increment: 1 } },
+				}),
+				prisma.couponRedemption.create({
+					data: {
+						couponId: coupon.id,
+						email: params.buyerData.buyerEmail,
+						blockId: params.blockId,
+					},
+				}),
+			)
+		}
+	}
+
+	await prisma.$transaction(txs)
 }
 
 /**

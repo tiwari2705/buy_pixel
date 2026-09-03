@@ -136,17 +136,39 @@ model WebhookEvent {
   @@map("webhook_events")
 }
 
+enum CouponType {
+  SINGLE_USE
+  UNLIMITED
+}
+
 model Coupon {
-  id            String    @id @default(cuid())
-  code          String    @unique
-  discountType  String    @default("PERCENT") // "PERCENT" | "FIXED"
-  discountValue Float     // e.g. 20 for 20% or 100 for ₹100
-  isUsed        Boolean   @default(false)
+  id            String     @id @default(cuid())
+  code          String     @unique
+  discountType  String     @default("PERCENT") // "PERCENT" | "FIXED"
+  discountValue Float      // e.g. 20 for 20% or 100 for ₹100
+  couponType    CouponType @default(SINGLE_USE) @map("coupon_type")
+  isUsed        Boolean    @default(false) // Only relevant for SINGLE_USE
   usedAt        DateTime?
-  usedByEmail   String?   @map("used_by_email")
-  usedByBlockId String?   @map("used_by_block_id")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  usedByEmail   String?    @map("used_by_email")
+  usedByBlockId String?    @map("used_by_block_id")
+  usageCount    Int        @default(0) @map("usage_count") // Total redemptions (for UNLIMITED display)
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  redemptions CouponRedemption[]
 
   @@map("coupons")
+}
+
+model CouponRedemption {
+  id        String   @id @default(cuid())
+  couponId  String   @map("coupon_id")
+  email     String
+  blockId   String?  @map("block_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@index([couponId])
+  @@map("coupon_redemptions")
 }
 

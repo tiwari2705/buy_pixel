@@ -37,7 +37,8 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: 'Invalid coupon code.' }, { status: 404 })
 	}
 
-	if (coupon.isUsed) {
+	// Single-use coupons can only be used once
+	if (coupon.couponType === 'SINGLE_USE' && coupon.isUsed) {
 		return NextResponse.json({ error: 'This coupon has already been used.' }, { status: 400 })
 	}
 
@@ -59,5 +60,8 @@ export async function POST(request: Request) {
 		discountPaise,
 		finalAmountPaise,
 		isFree: finalAmountPaise === 0,
+		couponType: coupon.couponType,
+		usageCount: coupon.usageCount,
 	})
 }
+

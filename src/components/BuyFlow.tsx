@@ -43,6 +43,8 @@ type AppliedCoupon = {
 	discountPaise: number
 	finalAmountPaise: number
 	isFree: boolean
+	couponType?: 'SINGLE_USE' | 'UNLIMITED'
+	usageCount?: number
 }
 
 type Step = 1 | 2 | 3 | 4
@@ -737,6 +739,19 @@ export function BuyFlow() {
 									<span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>
 										(-{rupees(appliedCoupon.discountPaise)})
 									</span>
+									{appliedCoupon.couponType === 'UNLIMITED' && appliedCoupon.usageCount != null && appliedCoupon.usageCount > 0 && (
+										<div style={{
+											marginTop: 4,
+											fontSize: 12,
+											color: 'var(--text-muted)',
+											display: 'flex',
+											alignItems: 'center',
+											gap: 4,
+										}}>
+											<span style={{ fontSize: 13 }}>🔥</span>
+											Used by {appliedCoupon.usageCount} {appliedCoupon.usageCount === 1 ? 'other' : 'others'}
+										</div>
+									)}
 								</div>
 								<button
 									type="button"

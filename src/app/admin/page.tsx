@@ -79,9 +79,11 @@ export default async function AdminPage() {
 		code: c.code,
 		discountType: c.discountType,
 		discountValue: c.discountValue,
+		couponType: c.couponType,
 		isUsed: c.isUsed,
 		usedAt: c.usedAt ? c.usedAt.toISOString() : null,
 		usedByEmail: c.usedByEmail,
+		usageCount: c.usageCount,
 		createdAt: c.createdAt.toISOString(),
 	}))
 

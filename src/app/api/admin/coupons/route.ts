@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: 'Not authorised.' }, { status: 401 })
 	}
 
-	let body: { code?: string; discountType?: string; discountValue?: number }
+	let body: { code?: string; discountType?: string; discountValue?: number; couponType?: string }
 	try {
 		body = await request.json()
 	} catch {
@@ -33,6 +33,7 @@ export async function POST(request: Request) {
 	const code = (body.code ?? '').trim().toUpperCase()
 	const discountType = body.discountType === 'FIXED' ? 'FIXED' : 'PERCENT'
 	const discountValue = Number(body.discountValue) || 0
+	const couponType = body.couponType === 'UNLIMITED' ? 'UNLIMITED' : 'SINGLE_USE'
 
 	if (!code || code.length < 2 || code.length > 30) {
 		return NextResponse.json(
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
 			code,
 			discountType,
 			discountValue,
+			couponType: couponType as 'SINGLE_USE' | 'UNLIMITED',
 		},
 	})
 
@@ -100,3 +102,4 @@ export async function DELETE(request: Request) {
 		return NextResponse.json({ error: 'Could not delete coupon.' }, { status: 400 })
 	}
 }
+

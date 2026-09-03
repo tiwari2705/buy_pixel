@@ -72,9 +72,16 @@ export async function POST(request: Request) {
 
 	if (couponCode) {
 		const coupon = await prisma.coupon.findUnique({ where: { code: couponCode } })
-		if (!coupon || coupon.isUsed) {
+		if (!coupon) {
 			return NextResponse.json(
-				{ error: 'Coupon code is invalid or has already been used.' },
+				{ error: 'Coupon code is invalid.' },
+				{ status: 400 },
+			)
+		}
+		// Single-use coupons cannot be reused; unlimited coupons are always valid
+		if (coupon.couponType === 'SINGLE_USE' && coupon.isUsed) {
+			return NextResponse.json(
+				{ error: 'This coupon has already been used.' },
 				{ status: 400 },
 			)
 		}
