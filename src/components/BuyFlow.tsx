@@ -57,7 +57,13 @@ type FormValues = {
 	agreedToTerms: boolean
 }
 
-type Uploaded = { imageUrl: string; imageWidth: number; imageHeight: number }
+type Uploaded = {
+	imageUrl: string
+	imageWidth: number
+	imageHeight: number
+	fileSize?: number
+	originalSize?: number
+}
 
 declare global {
 	interface Window {
@@ -67,6 +73,109 @@ declare global {
 
 function rupees(paise: number): string {
 	return `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+}
+
+/**
+ * Compresses an image in the browser using HTML5 Canvas.
+ * Validates minimum required block area dimensions and converts to optimized WebP.
+ */
+function compressClientImage(
+	file: File,
+	options: { minWidth: number; minHeight: number; maxWidth: number; maxHeight: number },
+): Promise<{ dataUrl: string; width: number; height: number; size: number }> {
+	return new Promise((resolve, reject) => {
+		if (file.type === 'image/gif') {
+			const reader = new FileReader()
+			reader.onload = (e) => {
+				const img = new Image()
+				img.onload = () => {
+					if (img.naturalWidth < options.minWidth || img.naturalHeight < options.minHeight) {
+						reject(
+							new Error(
+								`Image is ${img.naturalWidth} x ${img.naturalHeight}px. For this selection it must be at least ${options.minWidth} x ${options.minHeight}px.`,
+							),
+						)
+						return
+					}
+					resolve({
+						dataUrl: e.target?.result as string,
+						width: img.naturalWidth,
+						height: img.naturalHeight,
+						size: file.size,
+					})
+				}
+				img.onerror = () => reject(new Error('Invalid image file.'))
+				img.src = e.target?.result as string
+			}
+			reader.onerror = () => reject(new Error('Could not read image file.'))
+			reader.readAsDataURL(file)
+			return
+		}
+
+		const reader = new FileReader()
+		reader.onload = (e) => {
+			const img = new Image()
+			img.onload = () => {
+				const naturalW = img.naturalWidth
+				const naturalH = img.naturalHeight
+
+				if (naturalW < options.minWidth || naturalH < options.minHeight) {
+					reject(
+						new Error(
+							`Image is ${naturalW} x ${naturalH}px. For this selection it must be at least ${options.minWidth} x ${options.minHeight}px.`,
+						),
+					)
+					return
+				}
+
+				// Downscale if image dimensions exceed maximum threshold
+				let targetW = naturalW
+				let targetH = naturalH
+				if (targetW > options.maxWidth || targetH > options.maxHeight) {
+					const ratio = Math.min(options.maxWidth / targetW, options.maxHeight / targetH)
+					targetW = Math.round(targetW * ratio)
+					targetH = Math.round(targetH * ratio)
+					if (targetW < options.minWidth || targetH < options.minHeight) {
+						targetW = naturalW
+						targetH = naturalH
+					}
+				}
+
+				const canvas = document.createElement('canvas')
+				canvas.width = targetW
+				canvas.height = targetH
+				const ctx = canvas.getContext('2d')
+				if (!ctx) {
+					reject(new Error('Could not initialize image processing canvas.'))
+					return
+				}
+
+				ctx.imageSmoothingEnabled = true
+				ctx.imageSmoothingQuality = 'high'
+				ctx.drawImage(img, 0, 0, targetW, targetH)
+
+				// Compress to WebP (quality 0.85); fallback to JPEG if needed
+				let dataUrl = canvas.toDataURL('image/webp', 0.85)
+				if (!dataUrl.startsWith('data:image/webp')) {
+					dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+				}
+
+				const base64Str = dataUrl.split(',')[1] || ''
+				const compressedSize = Math.round((base64Str.length * 3) / 4)
+
+				resolve({
+					dataUrl,
+					width: targetW,
+					height: targetH,
+					size: compressedSize,
+				})
+			}
+			img.onerror = () => reject(new Error('Invalid image file.'))
+			img.src = e.target?.result as string
+		}
+		reader.onerror = () => reject(new Error('Could not read image file.'))
+		reader.readAsDataURL(file)
+	})
 }
 
 export function BuyFlow() {
@@ -213,26 +322,46 @@ export function BuyFlow() {
 			return
 		}
 
-		const formData = new FormData()
-		formData.set('file', file)
-		formData.set('selectionWidth', String(selection.width))
-		formData.set('selectionHeight', String(selection.height))
+		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+		if (!allowedTypes.includes(file.type)) {
+			setFieldErrors((current) => ({
+				...current,
+				image: 'Only JPG, PNG, WebP and GIF images are allowed.',
+			}))
+			return
+		}
+
+		if (file.size > 10 * 1024 * 1024) {
+			setFieldErrors((current) => ({
+				...current,
+				image: 'Image file must be 10 MB or smaller.',
+			}))
+			return
+		}
+
+		const neededW = selection.width * GRID.blockPixelSize
+		const neededH = selection.height * GRID.blockPixelSize
 
 		setUploading(true)
 		try {
-			const response = await fetch('/api/uploads', { method: 'POST', body: formData })
-			const data = (await response.json()) as Uploaded & { error?: string }
-			if (!response.ok) {
-				setFieldErrors((current) => ({ ...current, image: data.error ?? 'Upload failed.' }))
-				return
-			}
-			setUploaded({
-				imageUrl: data.imageUrl,
-				imageWidth: data.imageWidth,
-				imageHeight: data.imageHeight,
+			// Compress image directly in the browser before any upload
+			const result = await compressClientImage(file, {
+				minWidth: neededW,
+				minHeight: neededH,
+				maxWidth: Math.max(neededW * 2, 1200),
+				maxHeight: Math.max(neededH * 2, 1200),
 			})
-		} catch {
-			setFieldErrors((current) => ({ ...current, image: 'Upload failed. Please try again.' }))
+
+			setUploaded({
+				imageUrl: result.dataUrl,
+				imageWidth: result.width,
+				imageHeight: result.height,
+				fileSize: result.size,
+				originalSize: file.size,
+			})
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : 'Could not process that image.'
+			setFieldErrors((current) => ({ ...current, image: message }))
 		} finally {
 			setUploading(false)
 		}
@@ -342,9 +471,18 @@ export function BuyFlow() {
 			prefill: { name: created.buyer.name, email: created.buyer.email },
 			notes: { blockId: created.blockId },
 			theme: { color: '#2783DE' },
-			// The browser never confirms payment - we always wait for the webhook.
-			handler: () => {
+			// On payment completion: verify signature, activate block & upload image to storage
+			handler: async (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
 				setStep(4)
+				try {
+					await fetch('/api/payments/verify', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(response),
+					})
+				} catch (err) {
+					console.error('[checkout] Payment verification call failed:', err)
+				}
 				void pollOrder(created.blockId)
 			},
 			modal: {
@@ -561,29 +699,48 @@ export function BuyFlow() {
 									aria-invalid={fieldErrors.image ? 'true' : undefined}
 								/>
 								<p className="hint">
-									JPG, PNG, WebP or GIF, up to 2 MB. For this selection it must be at least{' '}
+									JPG, PNG, WebP or GIF, up to 10 MB. For this selection it must be at least{' '}
 									{requiredWidth} x {requiredHeight} pixels.
 								</p>
-								{uploading && <p className="hint">Uploading...</p>}
+								{uploading && <p className="hint">Compressing and preparing image...</p>}
 								{uploaded && !uploading && (
-									<div style={{ 
-										display: 'flex', 
-										alignItems: 'center', 
-										gap: '8px', 
-										padding: '8px 12px', 
-										background: '#F9F8F7', 
-										border: '1px solid #E6E5E3', 
-										borderRadius: '4px',
-										marginTop: '8px'
-									}}>
-										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2783DE" strokeWidth="2">
-											<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-											<circle cx="8.5" cy="8.5" r="1.5"/>
-											<polyline points="21 15 16 10 5 21"/>
-										</svg>
-										<span style={{ fontSize: '14px', color: '#2C2C2B' }}>
-											Image uploaded ({uploaded.imageWidth} x {uploaded.imageHeight}px)
-										</span>
+									<div
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											gap: '12px',
+											padding: '10px 14px',
+											background: 'var(--surface-sunken, #F9F8F7)',
+											border: '1px solid var(--border, #E6E5E3)',
+											borderRadius: '6px',
+											marginTop: '8px',
+										}}
+									>
+										{/* eslint-disable-next-line @next/next/no-img-element */}
+										<img
+											src={uploaded.imageUrl}
+											alt="Image preview"
+											style={{
+												width: 44,
+												height: 44,
+												objectFit: 'cover',
+												borderRadius: 4,
+												border: '1px solid var(--border, #E6E5E3)',
+												background: '#fff',
+											}}
+										/>
+										<div>
+											<div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary, #2C2C2B)' }}>
+												Image ready ({uploaded.imageWidth} &times; {uploaded.imageHeight}px)
+											</div>
+											<div style={{ fontSize: '12px', color: 'var(--text-secondary, #666)', marginTop: 2 }}>
+												{uploaded.fileSize ? `${Math.round(uploaded.fileSize / 1024)} KB compressed` : ''}
+												{uploaded.originalSize && uploaded.fileSize && uploaded.originalSize > uploaded.fileSize
+													? ` (${Math.round((1 - uploaded.fileSize / uploaded.originalSize) * 100)}% smaller)`
+													: ''}
+												{' • Stored in cloud only after payment succeeds'}
+											</div>
+										</div>
 									</div>
 								)}
 								{fieldErrors.image && <p className="field__error">{fieldErrors.image}</p>}

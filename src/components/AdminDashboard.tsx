@@ -39,6 +39,7 @@ export type CouponData = {
 	usedByEmail: string | null
 	usageCount: number
 	createdAt: string
+	creatorPin?: string
 }
 
 export type ContactMessageData = {
@@ -490,7 +491,26 @@ export function AdminDashboard({
 												<div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
 													🔥 Used {c.usageCount} {c.usageCount === 1 ? 'time' : 'times'}
 												</div>
-												<div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Unlimited redemptions</div>
+												{c.creatorPin && (
+													<div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+														<span style={{ fontSize: 11, background: 'var(--accent-soft)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4, fontWeight: 700, fontFamily: 'monospace' }}>
+															PIN: {c.creatorPin}
+														</span>
+														<button
+															type="button"
+															onClick={() => {
+																const origin = window.location.origin
+																const privateLink = `${origin}/creator/${c.code}?pin=${c.creatorPin}`
+																void navigator.clipboard.writeText(privateLink)
+																alert(`Copied Private Creator Link for ${c.code} to clipboard!\n${privateLink}`)
+															}}
+															style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', fontSize: 11, cursor: 'pointer', color: 'var(--text-secondary)' }}
+															title="Copy direct secret link for this creator"
+														>
+															📋 Copy Partner Link
+														</button>
+													</div>
+												)}
 											</div>
 										) : c.isUsed ? (
 											<div>

@@ -1,12 +1,21 @@
 import crypto from 'node:crypto'
+import sharp from 'sharp'
 
 /**
- * Image upload. Default implementation uploads straight to Supabase Storage
- * using the service-role key from a server route (the key never reaches the
- * browser). Swap in S3 by setting STORAGE_PROVIDER=s3 and filling the S3 vars.
+ * Image upload & compression. Default implementation compresses images to
+ * WebP / optimized format and uploads straight to Supabase Storage using
+ * the service-role key from a server route.
  */
 
 export type StoredImage = { url: string; path: string }
+
+export type CompressedImageResult = {
+	buffer: Buffer
+	mimeType: string
+	width: number
+	height: number
+	size: number
+}
 
 function extensionFor(mimeType: string): string {
 	switch (mimeType) {
@@ -27,11 +36,133 @@ export function buildObjectPath(mimeType: string): string {
 	return `blocks/${datePrefix}/${id}.${extensionFor(mimeType)}`
 }
 
+/**
+ * Extracts mime type and Buffer from a base64 data URI string.
+ */
+export function parseDataUri(dataUri: string): { mimeType: string; buffer: Buffer } | null {
+	const match = dataUri.match(/^data:([^;]+);base64,(.*)$/)
+	if (!match) return null
+	const mimeType = match[1]
+	const buffer = Buffer.from(match[2], 'base64')
+	return { mimeType, buffer }
+}
+
+/**
+ * Compresses an image buffer before uploading to storage.
+ * - Auto-orients using EXIF metadata
+ * - Downscales large images exceeding maxWidth/maxHeight while preserving aspect ratio
+ * - Converts to optimized WebP (or preserves animated GIF)
+ * - Strips unnecessary metadata to minimize byte size
+ */
+export async function compressImage(
+	inputBuffer: Buffer,
+	mimeType?: string,
+	options?: { maxWidth?: number; maxHeight?: number; quality?: number },
+): Promise<CompressedImageResult> {
+	const maxWidth = options?.maxWidth ?? 1200
+	const maxHeight = options?.maxHeight ?? 1200
+	const quality = options?.quality ?? 82
+
+	try {
+		const isGif =
+			mimeType === 'image/gif' ||
+			(inputBuffer.length > 3 && inputBuffer.toString('ascii', 0, 3) === 'GIF')
+
+		if (isGif) {
+			const meta = await sharp(inputBuffer, { animated: true }).metadata()
+			const pages = meta.pages ?? 1
+			if (pages > 1) {
+				// Animated GIF - optimize while retaining frames
+				const { data, info } = await sharp(inputBuffer, { animated: true })
+					.resize({
+						width: maxWidth,
+						height: maxHeight,
+						fit: 'inside',
+						withoutEnlargement: true,
+					})
+					.gif()
+					.toBuffer({ resolveWithObject: true })
+				return {
+					buffer: data,
+					mimeType: 'image/gif',
+					width: info.width,
+					height: info.height,
+					size: data.length,
+				}
+			}
+		}
+
+		// Standard image or single-frame GIF -> convert to high-efficiency WebP
+		const { data, info } = await sharp(inputBuffer)
+			.rotate() // auto-rotate based on EXIF
+			.resize({
+				width: maxWidth,
+				height: maxHeight,
+				fit: 'inside',
+				withoutEnlargement: true,
+			})
+			.webp({ quality, effort: 4 })
+			.toBuffer({ resolveWithObject: true })
+
+		return {
+			buffer: data,
+			mimeType: 'image/webp',
+			width: info.width,
+			height: info.height,
+			size: data.length,
+		}
+	} catch (error) {
+		console.error('[storage] Image compression failed, falling back to original bytes:', error)
+		const fallbackDim = readImageDimensions(inputBuffer) ?? { width: 0, height: 0 }
+		return {
+			buffer: inputBuffer,
+			mimeType: mimeType || 'image/jpeg',
+			width: fallbackDim.width,
+			height: fallbackDim.height,
+			size: inputBuffer.length,
+		}
+	}
+}
+
+/**
+ * Compresses an image given as a base64 data URI.
+ */
+export async function compressImageFromDataUri(
+	dataUri: string,
+	options?: { maxWidth?: number; maxHeight?: number; quality?: number },
+): Promise<CompressedImageResult & { dataUri: string }> {
+	const parsed = parseDataUri(dataUri)
+	if (!parsed) {
+		throw new Error('Invalid image data URI.')
+	}
+	const compressed = await compressImage(parsed.buffer, parsed.mimeType, options)
+	const compressedDataUri = `data:${compressed.mimeType};base64,${compressed.buffer.toString('base64')}`
+	return {
+		...compressed,
+		dataUri: compressedDataUri,
+	}
+}
+
+/**
+ * Uploads an image to cloud storage (Supabase Storage / S3).
+ * Always compresses the image before uploading to ensure minimal storage usage.
+ */
 export async function uploadImage(
-	bytes: ArrayBuffer,
+	bytes: ArrayBuffer | Buffer,
 	mimeType: string,
+	options?: { skipCompression?: boolean; maxWidth?: number; maxHeight?: number; quality?: number },
 ): Promise<StoredImage> {
-	const objectPath = buildObjectPath(mimeType)
+	let uploadBuffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+	let uploadMime = mimeType
+
+	// Compress before uploading to storage unless already compressed
+	if (!options?.skipCompression) {
+		const compressed = await compressImage(uploadBuffer, mimeType, options)
+		uploadBuffer = compressed.buffer
+		uploadMime = compressed.mimeType
+	}
+
+	const objectPath = buildObjectPath(uploadMime)
 	const provider = process.env.STORAGE_PROVIDER ?? 'supabase'
 
 	if (provider === 'supabase') {
@@ -46,11 +177,11 @@ export async function uploadImage(
 				method: 'POST',
 				headers: {
 					Authorization: `Bearer ${serviceKey}`,
-					'Content-Type': mimeType,
+					'Content-Type': uploadMime,
 					'cache-control': 'public, max-age=31536000, immutable',
 					'x-upsert': 'false',
 				},
-				body: Buffer.from(bytes),
+				body: new Uint8Array(uploadBuffer),
 			},
 		)
 
@@ -78,12 +209,40 @@ export async function uploadImage(
 	// })
 	// await s3.send(new PutObjectCommand({
 	//   Bucket: process.env.S3_BUCKET!, Key: objectPath,
-	//   Body: Buffer.from(bytes), ContentType: mimeType,
+	//   Body: uploadBuffer, ContentType: uploadMime,
 	//   CacheControl: 'public, max-age=31536000, immutable',
 	// }))
 	// return { url: `${process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL}/${objectPath}`, path: objectPath }
 
 	throw new Error(`Unsupported STORAGE_PROVIDER: ${provider}`)
+}
+
+/**
+ * Handles image upload only when payment is verified:
+ * - If imageDataOrUrl is already a remote URL (http:// or https://), returns it directly without uploading again.
+ * - If imageDataOrUrl is a data URI or base64, compresses it and uploads to storage.
+ */
+export async function processAndUploadImage(
+	imageDataOrUrl: string,
+	fallbackMime?: string,
+): Promise<{ url: string; path: string; width: number; height: number }> {
+	if (imageDataOrUrl.startsWith('http://') || imageDataOrUrl.startsWith('https://')) {
+		return { url: imageDataOrUrl, path: '', width: 0, height: 0 }
+	}
+
+	const parsed = parseDataUri(imageDataOrUrl)
+	const buffer = parsed ? parsed.buffer : Buffer.from(imageDataOrUrl, 'base64')
+	const mime = parsed ? parsed.mimeType : (fallbackMime || 'image/webp')
+
+	const compressed = await compressImage(buffer, mime)
+	const uploaded = await uploadImage(compressed.buffer, compressed.mimeType, { skipCompression: true })
+
+	return {
+		url: uploaded.url,
+		path: uploaded.path,
+		width: compressed.width,
+		height: compressed.height,
+	}
 }
 
 /**

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { isAdminAuthenticated } from '@/lib/auth'
+import { getCreatorPin } from '@/lib/creator-auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -11,9 +12,14 @@ export async function GET() {
 		return NextResponse.json({ error: 'Not authorised.' }, { status: 401 })
 	}
 
-	const coupons = await prisma.coupon.findMany({
+	const rawCoupons = await prisma.coupon.findMany({
 		orderBy: { createdAt: 'desc' },
 	})
+
+	const coupons = rawCoupons.map((c) => ({
+		...c,
+		creatorPin: c.couponType === 'UNLIMITED' ? getCreatorPin(c.code) : undefined,
+	}))
 
 	return NextResponse.json({ coupons })
 }
@@ -77,7 +83,12 @@ export async function POST(request: Request) {
 	})
 
 	revalidatePath('/admin')
-	return NextResponse.json({ coupon })
+	return NextResponse.json({
+		coupon: {
+			...coupon,
+			creatorPin: couponType === 'UNLIMITED' ? getCreatorPin(code) : undefined,
+		},
+	})
 }
 
 export async function DELETE(request: Request) {

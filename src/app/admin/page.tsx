@@ -3,6 +3,7 @@ import { AdminLogin } from '@/components/AdminLogin'
 import { AdminDashboard, type LiveBlockData, type TopBuyer } from '@/components/AdminDashboard'
 import { isAdminAuthenticated } from '@/lib/auth'
 import { formatInr } from '@/lib/config'
+import { getCreatorPin } from '@/lib/creator-auth'
 import { prisma } from '@/lib/db'
 import { getWallStats } from '@/lib/blocks'
 
@@ -85,6 +86,7 @@ export default async function AdminPage() {
 		usedByEmail: c.usedByEmail,
 		usageCount: c.usageCount,
 		createdAt: c.createdAt.toISOString(),
+		creatorPin: c.couponType === 'UNLIMITED' ? getCreatorPin(c.code) : undefined,
 	}))
 
 	const contactMessages = rawMessages.map((m) => ({

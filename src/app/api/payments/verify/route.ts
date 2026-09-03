@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
+import { markOrderPaid } from '@/lib/blocks'
+import { prisma } from '@/lib/db'
 import { verifyPaymentSignature } from '@/lib/razorpay'
 
 export const dynamic = 'force-dynamic'
@@ -7,17 +10,8 @@ export const runtime = 'nodejs'
 /**
  * POST /api/payments/verify
  * 
- * Verifies the Razorpay payment signature on the client side.
- * This is an OPTIONAL endpoint - the primary verification happens via webhook.
- * 
- * Expected payload from Razorpay checkout handler:
- * {
- *   razorpay_order_id: string
- *   razorpay_payment_id: string
- *   razorpay_signature: string
- * }
- * 
- * Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
+ * Verifies the Razorpay payment signature from the client side.
+ * When verified, marks order paid and triggers deferred image upload to storage.
  */
 export async function POST(request: Request) {
 	let body: unknown
@@ -71,12 +65,26 @@ export async function POST(request: Request) {
 			)
 		}
 
-		// Signature is valid
-		// NOTE: The actual payment confirmation still happens via webhook
-		// This endpoint only verifies that the signature is correct
+		// Signature is valid: confirm order and upload image to storage
+		const payment = await prisma.payment.findUnique({
+			where: { razorpayOrderId: razorpay_order_id },
+		})
+
+		if (payment) {
+			await markOrderPaid({
+				razorpayOrderId: razorpay_order_id,
+				razorpayPaymentId: razorpay_payment_id,
+				amountPaise: payment.amount,
+				currency: payment.currency,
+				rawPayload: { verifiedBy: 'client_signature', razorpay_order_id, razorpay_payment_id },
+			})
+			revalidatePath('/')
+			revalidatePath('/admin')
+		}
+
 		return NextResponse.json({
 			success: true,
-			message: 'Payment signature verified successfully.',
+			message: 'Payment verified and block activated successfully.',
 			orderId: razorpay_order_id,
 			paymentId: razorpay_payment_id,
 		})

@@ -7,6 +7,7 @@ const POLICY_LINKS = [
 	{ href: '/refund', label: 'Refund & Cancellation' },
 	{ href: '/shipping', label: 'Shipping Policy' },
 	{ href: '/contact', label: 'Contact Us' },
+	{ href: '/creator', label: 'Creator Portal' },
 ]
 
 export function SiteFooter() {

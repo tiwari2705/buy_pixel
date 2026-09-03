@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db'
 import { clientIp, rateLimit } from '@/lib/rate-limit'
 import { createRazorpayOrder } from '@/lib/razorpay'
 import { sanitizeText } from '@/lib/sanitize'
+import { compressImageFromDataUri } from '@/lib/storage'
 import { createOrderSchema, flattenZodError, meetsMinimumDimensions } from '@/lib/validation'
 
 export const dynamic = 'force-dynamic'
@@ -122,16 +123,37 @@ export async function POST(request: Request) {
 	}
 
 	// Buyer details are NOT stored in the Block yet. They are held in
-	// Payment.buyerData and only written to the Block when the Razorpay
-	// webhook confirms payment (payment.captured).
+	// Payment.buyerData and only written to the Block when payment succeeds.
+	// Image is compressed here and uploaded to storage ONLY upon successful payment.
+	let processedImageUrl = buyer.imageUrl
+	let processedImageWidth = buyer.imageWidth
+	let processedImageHeight = buyer.imageHeight
+	let processedMimeType: string | undefined
+
+	if (buyer.imageUrl.startsWith('data:')) {
+		try {
+			const compressed = await compressImageFromDataUri(buyer.imageUrl, {
+				maxWidth: Math.max(selection.width * GRID.blockPixelSize * 2, 1200),
+				maxHeight: Math.max(selection.height * GRID.blockPixelSize * 2, 1200),
+			})
+			processedImageUrl = compressed.dataUri
+			processedImageWidth = compressed.width
+			processedImageHeight = compressed.height
+			processedMimeType = compressed.mimeType
+		} catch (compressErr) {
+			console.warn('[orders] Server-side compression warning, using original data:', compressErr)
+		}
+	}
+
 	const buyerData = {
 		buyerName: cleanName,
 		buyerEmail: cleanEmail,
 		linkUrl: buyer.linkUrl.trim(),
 		description: cleanDescription,
-		imageUrl: buyer.imageUrl,
-		imageWidth: buyer.imageWidth,
-		imageHeight: buyer.imageHeight,
+		imageUrl: processedImageUrl,
+		imageWidth: processedImageWidth,
+		imageHeight: processedImageHeight,
+		mimeType: processedMimeType,
 		couponCode: appliedCouponCode,
 	}
 

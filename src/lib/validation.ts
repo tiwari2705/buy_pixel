@@ -70,7 +70,14 @@ export const buyerSchema = z.object({
 		.trim()
 		.min(3, 'Add a short description.')
 		.max(150, 'Description must be 150 characters or fewer.'),
-	imageUrl: z.string().trim().url('Upload an image first.'),
+	imageUrl: z
+		.string()
+		.trim()
+		.refine(
+			(val) =>
+				/^https?:\/\//i.test(val) || /^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(val),
+			{ message: 'Choose a valid image.' },
+		),
 	imageWidth: z.number().int().min(1),
 	imageHeight: z.number().int().min(1),
 	agreedToTerms: z.literal(true, {

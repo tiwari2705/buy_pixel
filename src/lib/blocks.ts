@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { GRID, RESERVATION_MINUTES, TOTAL_BLOCKS } from './config'
 import { isUniqueViolation, prisma } from './db'
+import { processAndUploadImage } from './storage'
 
 export type Selection = { x: number; y: number; width: number; height: number }
 
@@ -26,6 +27,8 @@ export type BuyerData = {
 	imageWidth: number
 	imageHeight: number
 	couponCode?: string
+	imageData?: string
+	mimeType?: string
 }
 
 export class BlocksTakenError extends Error {
@@ -202,6 +205,32 @@ export async function markOrderPaid(params: {
 	// Extract buyer data that was stored in Payment.buyerData at order creation
 	const buyer = (payment.buyerData ?? {}) as Partial<BuyerData>
 
+	let finalImageUrl = buyer.imageUrl ?? ''
+	let finalImageWidth = buyer.imageWidth ?? 0
+	let finalImageHeight = buyer.imageHeight ?? 0
+
+	// Upload image to storage ONLY after payment is confirmed
+	const imageSource = buyer.imageData || buyer.imageUrl
+	if (imageSource && (imageSource.startsWith('data:') || buyer.imageData)) {
+		try {
+			const uploaded = await processAndUploadImage(imageSource, buyer.mimeType)
+			finalImageUrl = uploaded.url
+			if (uploaded.width) finalImageWidth = uploaded.width
+			if (uploaded.height) finalImageHeight = uploaded.height
+		} catch (uploadError) {
+			console.error('[markOrderPaid] Image upload to storage failed:', uploadError)
+		}
+	}
+
+	// Clean up temporary image data from buyerData so database stays lean
+	const cleanedBuyerData = {
+		...buyer,
+		imageUrl: finalImageUrl,
+		imageWidth: finalImageWidth,
+		imageHeight: finalImageHeight,
+	}
+	delete (cleanedBuyerData as Record<string, unknown>).imageData
+
 	const txs: Prisma.PrismaPromise<unknown>[] = [
 		prisma.payment.update({
 			where: { id: payment.id },
@@ -211,6 +240,7 @@ export async function markOrderPaid(params: {
 				amount: params.amountPaise,
 				currency: params.currency,
 				rawPayload: params.rawPayload,
+				buyerData: cleanedBuyerData as unknown as Prisma.InputJsonValue,
 			},
 		}),
 		prisma.block.update({
@@ -225,9 +255,9 @@ export async function markOrderPaid(params: {
 				buyerEmail: buyer.buyerEmail ?? '',
 				linkUrl: buyer.linkUrl ?? '',
 				description: buyer.description ?? '',
-				imageUrl: buyer.imageUrl ?? '',
-				imageWidth: buyer.imageWidth ?? 0,
-				imageHeight: buyer.imageHeight ?? 0,
+				imageUrl: finalImageUrl,
+				imageWidth: finalImageWidth,
+				imageHeight: finalImageHeight,
 			},
 		}),
 	]
@@ -284,6 +314,31 @@ export async function completeFreeOrder(params: {
 }): Promise<void> {
 	const coupon = await prisma.coupon.findUnique({ where: { code: params.couponCode } })
 
+	let finalImageUrl = params.buyerData.imageUrl
+	let finalImageWidth = params.buyerData.imageWidth
+	let finalImageHeight = params.buyerData.imageHeight
+
+	// Upload image to storage ONLY upon completing the order
+	const imageSource = params.buyerData.imageData || params.buyerData.imageUrl
+	if (imageSource && (imageSource.startsWith('data:') || params.buyerData.imageData)) {
+		try {
+			const uploaded = await processAndUploadImage(imageSource, params.buyerData.mimeType)
+			finalImageUrl = uploaded.url
+			if (uploaded.width) finalImageWidth = uploaded.width
+			if (uploaded.height) finalImageHeight = uploaded.height
+		} catch (uploadError) {
+			console.error('[completeFreeOrder] Image upload to storage failed:', uploadError)
+		}
+	}
+
+	const cleanedBuyerData = {
+		...params.buyerData,
+		imageUrl: finalImageUrl,
+		imageWidth: finalImageWidth,
+		imageHeight: finalImageHeight,
+	}
+	delete (cleanedBuyerData as Record<string, unknown>).imageData
+
 	const txs: Prisma.PrismaPromise<unknown>[] = [
 		prisma.block.update({
 			where: { id: params.blockId },
@@ -295,9 +350,9 @@ export async function completeFreeOrder(params: {
 				buyerEmail: params.buyerData.buyerEmail,
 				linkUrl: params.buyerData.linkUrl,
 				description: params.buyerData.description,
-				imageUrl: params.buyerData.imageUrl,
-				imageWidth: params.buyerData.imageWidth,
-				imageHeight: params.buyerData.imageHeight,
+				imageUrl: finalImageUrl,
+				imageWidth: finalImageWidth,
+				imageHeight: finalImageHeight,
 			},
 		}),
 		prisma.payment.create({
@@ -308,7 +363,7 @@ export async function completeFreeOrder(params: {
 				amount: 0,
 				currency: 'INR',
 				status: 'captured',
-				buyerData: params.buyerData as unknown as Prisma.InputJsonValue,
+				buyerData: cleanedBuyerData as unknown as Prisma.InputJsonValue,
 			},
 		}),
 	]
